@@ -122,7 +122,136 @@ def _sources(results: List[dict]) -> List[dict]:
     return out
 
 
-# ── main entry point ─────────────────────────────────────────────────────────
+# ── streaming entry point ────────────────────────────────────────────────────
+
+async def research_company_stream(company: str, role: str):
+    """
+    Async generator. Yields {"type":"signal","category":str,"items":[str,...]}
+    as each of the 5 Tavily searches completes (in arrival order), then yields
+    {"type":"tavily_done","data":{...}} with the full merged research dict.
+    Raises ValueError if TAVILY_API_KEY not set.
+    """
+    if not TAVILY_API_KEY:
+        raise ValueError("TAVILY_API_KEY not set")
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    SEARCHES = [
+        ("funding", dict(
+            query=f"{company} funding valuation investors revenue growth",
+            search_depth="basic",
+            include_domains=[
+                "crunchbase.com", "techcrunch.com", "sifted.eu",
+                "gruenderszene.de", "eu-startups.com", "bloomberg.com",
+            ],
+            include_answer="basic",
+            max_results=5,
+        )),
+        ("news", dict(
+            query=f"{company} layoffs hiring restructuring growth news",
+            search_depth="basic",
+            topic="news",
+            time_range="month",
+            include_answer="basic",
+            max_results=7,
+        )),
+        ("salary", dict(
+            query=f"{role} salary compensation {company} total comp equity",
+            search_depth="advanced",
+            include_domains=[
+                "levels.fyi", "glassdoor.com", "blind.co",
+                "stepstone.de", "gehalt.de", "gehaltsvergleich.com", "payscale.com",
+            ],
+            include_answer="advanced",
+            max_results=5,
+        )),
+        ("hiring", dict(
+            query=f"{company} {role} job opening careers hiring",
+            search_depth="basic",
+            include_domains=[
+                "greenhouse.io", "lever.co", "jobs.ashbyhq.com",
+                "linkedin.com", "xing.com", "stepstone.de", "wellfound.com",
+            ],
+            include_answer="basic",
+            max_results=6,
+        )),
+        ("sentiment", dict(
+            query=f"{company} employee review culture Mitarbeiter Bewertung",
+            search_depth="advanced",
+            include_domains=["glassdoor.com", "kununu.com", "blind.co", "reddit.com"],
+            include_answer="advanced",
+            max_results=5,
+        )),
+    ]
+
+    async with httpx.AsyncClient() as client:
+        async def _run(category: str, kwargs: dict):
+            try:
+                q = kwargs.pop("query")
+                result = await _search(client, q, **kwargs)
+                await queue.put((category, result, None))
+            except Exception as e:
+                logger.warning("Tavily %s search failed in stream: %s", category, e)
+                await queue.put((category, [], e))
+
+        tasks = [asyncio.create_task(_run(cat, dict(kw))) for cat, kw in SEARCHES]
+
+        raw_by_cat: dict = {}
+        filtered_by_cat: dict = {}
+
+        for _ in range(len(SEARCHES)):
+            category, raw, error = await queue.get()
+            raw_by_cat[category] = raw
+            filtered = _filter_results(raw, company) if not error else []
+            filtered_by_cat[category] = filtered
+            snippets = _snippets(filtered, 3)
+            if snippets:
+                yield {"type": "signal", "category": category, "items": snippets}
+
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Extract API on top signal-rich URLs
+        all_signal = (
+            filtered_by_cat.get("funding", [])
+            + filtered_by_cat.get("news", [])
+            + filtered_by_cat.get("salary", [])
+        )
+        extract_urls = list({r["url"] for r in all_signal if r.get("url")})
+        extracts: list = []
+        if extract_urls:
+            try:
+                raw_extracts = await _extract(client, extract_urls[:10])
+                extracts = [
+                    {"url": e.get("url", ""), "content": (e.get("raw_content") or "")[:EXTRACT_CONTENT_CAP]}
+                    for e in raw_extracts
+                    if e.get("raw_content")
+                ]
+            except Exception as e:
+                logger.warning("Tavily Extract failed in stream: %s", e)
+
+    def _ans(cat: str) -> str:
+        raw = raw_by_cat.get(cat, [])
+        return raw[0].get("_answer", "") if raw else ""
+
+    all_res = sum((filtered_by_cat.get(c, []) for c in ["funding", "news", "salary", "hiring", "sentiment"]), [])
+
+    yield {"type": "tavily_done", "data": {
+        "fundingAnswer":     _ans("funding"),
+        "fundingSnippets":   _snippets(filtered_by_cat.get("funding",   [])),
+        "fundingExtracts":   extracts,
+        "newsAnswer":        _ans("news"),
+        "newsSnippets":      _snippets(filtered_by_cat.get("news",      [])),
+        "salaryAnswer":      _ans("salary"),
+        "salarySnippets":    _snippets(filtered_by_cat.get("salary",    [])),
+        "hiringAnswer":      _ans("hiring"),
+        "hiringSnippets":    _snippets(filtered_by_cat.get("hiring",    [])),
+        "sentimentAnswer":   _ans("sentiment"),
+        "sentimentSnippets": _snippets(filtered_by_cat.get("sentiment", [])),
+        "sources":           _sources(all_res)[:8],
+    }}
+
+
+# ── batch entry point ─────────────────────────────────────────────────────────
 
 async def research_company(company: str, role: str) -> dict:
     """

@@ -17,6 +17,7 @@ Demo:  bun --cwd frontend run build
 """
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 
@@ -25,14 +26,14 @@ load_dotenv()  # picks up .env before any os.getenv calls in helpers
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from backend.helpers.tavily_research import research_company
+from backend.helpers.tavily_research import research_company, research_company_stream
 from backend.helpers.structured_data import fetch_structured_signals
 from backend.helpers.research_context import build_context, count_sources_hit
-from backend.helpers.llm_scoring import score_job
+from backend.helpers.llm_scoring import score_job, score_job_stream_async
 from backend.helpers.fallback import get_fallback
 
 logging.basicConfig(level=logging.INFO)
@@ -137,6 +138,112 @@ async def analyze_job_stock(req: JobRequest):
     fallback["sources"]     = sources
     fallback["dataQuality"] = "low"
     return fallback
+
+
+def _sse(data: dict) -> str:
+    return f"data: {json.dumps(data)}\n\n"
+
+
+@app.post("/api/analyze-job-stock/stream")
+async def analyze_job_stock_stream(req: JobRequest):
+    """
+    SSE streaming endpoint. Emits signal events as Tavily searches complete,
+    then Gemini thinking chunks, then the validated result object.
+    Always emits exactly one {"type":"result"} event — never leaves client hanging.
+    """
+    company = req.company.strip()
+    role    = req.role.strip()
+    logger.info("Stream: company=%s role=%s", company, role)
+
+    async def event_stream():
+        sources: list = []
+        tavily_data: dict = {}
+
+        try:
+            # Phase 1: structured data fires in background while Tavily streams
+            structured_task = asyncio.create_task(
+                asyncio.wait_for(fetch_structured_signals(company, role), timeout=15.0)
+            )
+
+            yield _sse({"type": "status", "label": "Searching company data…"})
+
+            try:
+                async for event in research_company_stream(company, role):
+                    if event["type"] == "tavily_done":
+                        tavily_data = event["data"]
+                        sources = tavily_data.get("sources", [])
+                    else:
+                        yield _sse(event)
+            except Exception as e:
+                logger.warning("Tavily stream failed: %s", e)
+
+            # Collect structured data (usually already done)
+            structured_res: dict = {}
+            try:
+                structured_res = await structured_task
+            except Exception as e:
+                logger.warning("Structured data failed in stream: %s", e)
+
+            # Emit structured signals
+            items = []
+            if structured_res.get("ycStatus") and structured_res["ycStatus"] != "unknown":
+                items.append(f"YC {structured_res.get('ycBatch', '?')} · {structured_res['ycStatus']}")
+            if structured_res.get("hnJobPostCount"):
+                items.append(f"{structured_res['hnJobPostCount']} HN job posts")
+            if structured_res.get("secFilingCount"):
+                items.append(f"{structured_res['secFilingCount']} SEC filings since 2024")
+            if structured_res.get("bundesagenturVacancies"):
+                items.append(
+                    f"{structured_res['bundesagenturVacancies']} open {role!r} roles in Germany"
+                )
+            if items:
+                yield _sse({"type": "signal", "category": "structured", "items": items})
+
+            # Phase 2: build context + stream LLM
+            ctx = build_context(tavily_data, structured_res)
+            ctx_sources = ctx.pop("sources", sources)
+
+            yield _sse({"type": "status", "label": "Analyzing with Gemini 2.5 Flash…"})
+
+            result = None
+            async for event in score_job_stream_async(company, role, ctx):
+                if event["type"] == "result":
+                    result = event["data"]
+                    result["sources"] = ctx_sources
+                    hits = count_sources_hit(ctx)
+                    result["dataQuality"] = "high" if hits >= 6 else "medium" if hits >= 3 else "low"
+                    ds = result.get("debugSignals", {})
+                    ds["ycStatus"]               = ctx.get("ycStatus")
+                    ds["secFilingCount"]         = ctx.get("secFilingCount")
+                    ds["hnJobPostCount"]         = ctx.get("hnJobPostCount")
+                    ds["bundesagenturVacancies"] = ctx.get("bundesagenturVacancies")
+                    ds["dataSourcesHit"]         = hits
+                    result["debugSignals"] = ds
+                    yield _sse({"type": "result", "data": result})
+                elif event["type"] == "error":
+                    logger.warning("LLM stream error: %s", event.get("message"))
+                else:
+                    yield _sse(event)  # thinking chunks
+
+            if result is None:
+                raise RuntimeError("LLM did not emit a result")
+
+        except Exception as e:
+            logger.warning("Stream pipeline failed (%s) — emitting fallback", e)
+            fallback = get_fallback(company, role)
+            fallback["sources"]     = sources
+            fallback["dataQuality"] = "low"
+            yield _sse({"type": "result", "data": fallback})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ── Static frontend (built with: bun --cwd frontend run build) ───────────────

@@ -10,12 +10,14 @@ Design principles:
   - Sources are never requested from or trusted from the LLM
 """
 
+import asyncio
 import hashlib
 import json
 import logging
 import os
 import random
 import re
+import threading
 
 from google import genai
 from google.genai import types
@@ -389,3 +391,80 @@ def score_job(company: str, role: str, ctx: dict) -> dict:
 
     parsed = json.loads(raw)
     return _validate_and_patch(parsed, company, role)
+
+
+# ── streaming variant ─────────────────────────────────────────────────────────
+
+def _score_job_stream_sync(company: str, role: str, ctx: dict):
+    """
+    Synchronous generator. Yields {"type":"thinking","text":...} for each
+    Gemini thought chunk, then {"type":"result","data":{...}} when done.
+    Designed to run inside a worker thread.
+    Raises on API/parse error.
+    """
+    if not GOOGLE_API_KEY:
+        raise ValueError("GOOGLE_API_KEY not set")
+
+    client = genai.Client(api_key=GOOGLE_API_KEY)
+    prompt = _build_prompt(company, role, ctx)
+    content_buf: list[str] = []
+
+    for chunk in client.models.generate_content_stream(
+        model=MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            temperature=1.0,
+            response_mime_type="application/json",
+            thinking_config=types.ThinkingConfig(
+                thinking_budget=8000,
+                include_thoughts=True,  # we separate thought vs content parts
+            ),
+        ),
+    ):
+        if not chunk.candidates:
+            continue
+        for part in chunk.candidates[0].content.parts:
+            if getattr(part, "thought", False):
+                if part.text:
+                    yield {"type": "thinking", "text": part.text}
+            else:
+                if part.text:
+                    content_buf.append(part.text)
+
+    raw = "".join(content_buf).strip()
+    raw = re.sub(r"^```(?:json)?\s*", "", raw)
+    raw = re.sub(r"\s*```$", "", raw)
+
+    parsed = json.loads(raw)
+    result = _validate_and_patch(parsed, company, role)
+    yield {"type": "result", "data": result}
+
+
+async def score_job_stream_async(company: str, role: str, ctx: dict):
+    """
+    Async generator. Bridges _score_job_stream_sync (which blocks) to async
+    via asyncio.Queue + a daemon thread.
+    Yields {"type":"thinking","text":...} then {"type":"result","data":{...}}.
+    On error yields {"type":"error","message":str}.
+    """
+    loop = asyncio.get_event_loop()
+    q: asyncio.Queue = asyncio.Queue()
+    _DONE = object()
+
+    def _thread():
+        try:
+            for event in _score_job_stream_sync(company, role, ctx):
+                loop.call_soon_threadsafe(q.put_nowait, event)
+        except Exception as e:
+            loop.call_soon_threadsafe(q.put_nowait, {"type": "error", "message": str(e)})
+        finally:
+            loop.call_soon_threadsafe(q.put_nowait, _DONE)
+
+    threading.Thread(target=_thread, daemon=True).start()
+
+    while True:
+        item = await q.get()
+        if item is _DONE:
+            break
+        yield item
