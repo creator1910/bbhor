@@ -1,19 +1,17 @@
 """
-LLM scoring helper using Google Gemini.
+LLM scoring helper using Google Gemini via the google-genai SDK.
 Takes aggregated research signals and returns a structured $JOB analysis.
 """
 
 import os
 import json
 import re
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 
-# Configure Gemini once at import time
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
-
+MODEL = "gemini-2.5-flash"
 
 SYSTEM_PROMPT = """You are a sharp, opinionated career analyst who prices jobs like financial assets.
 Given research signals about a company and role, produce a synthetic stock analysis in strict JSON.
@@ -85,17 +83,19 @@ def score_job(company: str, role: str, risk_appetite: str, research: dict) -> di
     if not GOOGLE_API_KEY:
         raise ValueError("GOOGLE_API_KEY not set")
 
-    model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
-        system_instruction=SYSTEM_PROMPT,
-        generation_config=genai.GenerationConfig(
+    client = genai.Client(api_key=GOOGLE_API_KEY)
+    prompt = _build_prompt(company, role, risk_appetite, research)
+
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
             temperature=0.7,
             response_mime_type="application/json",
         ),
     )
 
-    prompt = _build_prompt(company, role, risk_appetite, research)
-    response = model.generate_content(prompt)
     raw = response.text.strip()
 
     # Strip markdown code fences if model ignores mime type hint

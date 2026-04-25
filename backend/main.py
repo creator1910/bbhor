@@ -13,6 +13,9 @@ Run locally:
 
 import asyncio
 import logging
+from dotenv import load_dotenv
+load_dotenv()  # picks up .env before any os.getenv calls in helpers
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
