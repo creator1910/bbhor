@@ -14,6 +14,12 @@ export interface SignalScore { label: string; score: number; tone: "success" | "
 export interface SourceItem { tag: SourceTag; title: string; url: string; outlet: string; sentiment: Sentiment; date: string; }
 export interface Alternative { title: string; subtitle: string; rating: Rating; delta: string; note: string; }
 
+export interface ChartAnnotation {
+  monthIndex: number;
+  label: string;
+  direction: "positive" | "negative";
+}
+
 export interface JobAnalysis {
   ticker: string;
   company: string;
@@ -30,6 +36,7 @@ export interface JobAnalysis {
   signals: SignalScore[];
   sources: SourceItem[];
   alternatives: Alternative[];
+  chartAnnotations?: ChartAnnotation[];
   dataQuality?: "high" | "medium" | "low";
   salaryMin?: number;
   salaryMax?: number;
@@ -40,13 +47,23 @@ export interface JobAnalysis {
     hiringSignals?: string[];
     riskSignals?: string[];
     ycStatus?: string | null;
+    ycBatch?: string | null;
+    ycTeamSize?: number | null;
+    ycIndustry?: string | null;
     secFilingCount?: number | null;
+    secFilingSummaries?: string[];
     hnJobPostCount?: number | null;
+    hnTopJobTitles?: string[];
     bundesagenturVacancies?: number | null;
+    bundesagenturTopEmployers?: string[];
     salaryMin?: number | null;
     salaryMax?: number | null;
     salaryCurrency?: string | null;
     cultureScore?: number | null;
+    cultureSummary?: string;
+    handelsregisterInsolvency?: boolean;
+    handelsregisterFounded?: string | null;
+    groundingSummary?: string;
     dataSourcesHit?: number;
   };
 }
@@ -63,6 +80,7 @@ interface BackendResponse {
   recommendation: string;
   alternatives: { label: string; description: string; risk: "Low" | "Medium" | "High" }[];
   sources: { title: string; url: string; snippet: string }[];
+  chartAnnotations?: ChartAnnotation[];
   dataQuality?: "high" | "medium" | "low";
   debugSignals?: {
     companySummary?: string;
@@ -70,13 +88,23 @@ interface BackendResponse {
     hiringSignals?: string[];
     riskSignals?: string[];
     ycStatus?: string | null;
+    ycBatch?: string | null;
+    ycTeamSize?: number | null;
+    ycIndustry?: string | null;
     secFilingCount?: number | null;
+    secFilingSummaries?: string[];
     hnJobPostCount?: number | null;
+    hnTopJobTitles?: string[];
     bundesagenturVacancies?: number | null;
+    bundesagenturTopEmployers?: string[];
     salaryMin?: number | null;
     salaryMax?: number | null;
     salaryCurrency?: string | null;
     cultureScore?: number | null;
+    cultureSummary?: string;
+    handelsregisterInsolvency?: boolean;
+    handelsregisterFounded?: string | null;
+    groundingSummary?: string;
     dataSourcesHit?: number;
   };
 }
@@ -138,6 +166,7 @@ function adaptResponse(raw: BackendResponse, company: string, role: string): Job
       delta: a.risk === "Low" ? "Stable, low variance" : a.risk === "Medium" ? "Moderate upside potential" : "High variance, high ceiling",
       note: a.description,
     })),
+    chartAnnotations: raw.chartAnnotations ?? [],
     dataQuality: raw.dataQuality,
     salaryMin: ds?.salaryMin ?? undefined,
     salaryMax: ds?.salaryMax ?? undefined,
