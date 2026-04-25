@@ -8,7 +8,6 @@ Turn a user's employer into a synthetic career stock.
 User input:
 - company: string
 - role: string
-- riskAppetite: "safe" | "balanced" | "ambitious" | "founder"
 
 Backend goal:
 Expose POST /api/analyze-job-stock.

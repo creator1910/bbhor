@@ -91,12 +91,9 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 ```json
 {
   "company": "N26",
-  "role": "Product Manager",
-  "riskAppetite": "balanced"
+  "role": "Product Manager"
 }
 ```
-
-`riskAppetite` must be one of: `safe` | `balanced` | `ambitious` | `founder`
 
 **Response:** see [`docs/api-contract.md`](docs/api-contract.md) for the full schema.
 
@@ -105,7 +102,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 ```bash
 curl -X POST http://localhost:8000/api/analyze-job-stock \
   -H "Content-Type: application/json" \
-  -d '{"company":"N26","role":"Product Manager","riskAppetite":"balanced"}'
+  -d '{"company":"N26","role":"Product Manager"}'
 ```
 
 ---
