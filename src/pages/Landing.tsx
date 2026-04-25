@@ -4,10 +4,18 @@ import { ArrowRight } from "lucide-react";
 import { TickerTape } from "@/components/TickerTape";
 import { AppTopbar } from "@/components/AppTopbar";
 
+type Mode = "new" | "current";
+
+const MODES: { id: Mode; label: string; sub: string }[] = [
+  { id: "new",     label: "Evaluating an offer",    sub: "Should I take this job?" },
+  { id: "current", label: "Reviewing my current job", sub: "Should I stay or move on?" },
+];
+
 const Landing = () => {
   const navigate = useNavigate();
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
+  const [mode, setMode] = useState<Mode>("new");
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -16,7 +24,7 @@ const Landing = () => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!ready) return;
-    navigate("/loading", { state: { company, role } });
+    navigate("/loading", { state: { company, role, mode } });
   };
 
   const placeholderRole = useMemo(() => "e.g. Product Manager", []);
@@ -47,10 +55,36 @@ const Landing = () => {
             and AI analysis.
           </p>
 
+          {/* Mode toggle */}
+          <div className={`mt-10 w-full max-w-2xl grid grid-cols-2 gap-3 transition-all duration-700 delay-250 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"}`}>
+            {MODES.map((m) => {
+              const active = mode === m.id;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setMode(m.id)}
+                  className={`flex flex-col items-start gap-1 rounded-xl border px-4 py-3.5 text-left transition-all duration-150
+                    ${active
+                      ? "border-primary bg-primary/10 shadow-orange-glow"
+                      : "border-card-border bg-card/60 hover:border-primary/40"}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={`h-2 w-2 rounded-full border transition-colors ${active ? "bg-primary border-primary" : "border-muted-foreground/50"}`} />
+                    <span className={`font-mono text-[11px] uppercase tracking-widest ${active ? "text-primary" : "text-muted-foreground"}`}>
+                      {m.label}
+                    </span>
+                  </div>
+                  <span className="pl-4 text-sm text-muted-foreground">{m.sub}</span>
+                </button>
+              );
+            })}
+          </div>
+
           {/* Form */}
           <form
             onSubmit={handleSubmit}
-            className={`mt-12 w-full max-w-2xl rounded-2xl border border-card-border bg-card/80 p-3 shadow-card-elevated backdrop-blur-md transition-all duration-700 delay-300 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"}`}
+            className={`mt-3 w-full max-w-2xl rounded-2xl border border-card-border bg-card/80 p-3 shadow-card-elevated backdrop-blur-md transition-all duration-700 delay-300 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"}`}
           >
             <div className="grid gap-2 md:grid-cols-2">
               <label className="block text-left">
@@ -80,7 +114,7 @@ const Landing = () => {
                   ? "bg-primary text-primary-foreground hover:bg-primary-glow shadow-orange-glow"
                   : "bg-muted text-muted-foreground cursor-not-allowed"}`}
             >
-              Price my job
+              {mode === "new" ? "Price this offer" : "Evaluate my position"}
               <ArrowRight className="h-4 w-4" strokeWidth={2.5} />
             </button>
           </form>

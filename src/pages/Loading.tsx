@@ -17,9 +17,10 @@ interface FeedItem { id: string; category: string; text: string }
 const Loading = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const state = (location.state || {}) as { company?: string; role?: string; riskAppetite?: string };
+  const state = (location.state || {}) as { company?: string; role?: string; mode?: "new" | "current" };
   const company = state.company || "N26";
   const role    = state.role    || "Product Manager";
+  const mode    = state.mode    || "new";
 
   const [statusLabel, setStatusLabel] = useState("Connecting to data sources…");
   const [feed,     setFeed]     = useState<FeedItem[]>([]);
@@ -43,7 +44,7 @@ const Loading = () => {
     async function run() {
       try {
         const gen = streamJobAnalysis(
-          { company, role, riskAppetite: state.riskAppetite },
+          { company, role },
           abort.signal,
         );
 
@@ -67,7 +68,7 @@ const Loading = () => {
           } else if (event.type === "result") {
             setProgress(100);
             await new Promise(r => setTimeout(r, 500));
-            navigate("/dashboard", { state: { ...state, data: event.data } });
+            navigate("/dashboard", { state: { ...state, mode, data: event.data } });
           }
         }
       } catch (err) {
@@ -94,10 +95,10 @@ const Loading = () => {
           {/* Header */}
           <div className="mb-6">
             <div className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-              Pricing job · {company} · {role}
+              {mode === "current" ? "Evaluating your position" : "Pricing this offer"} · {company} · {role}
             </div>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight">
-              Building your career ticker…
+              {mode === "current" ? "Analysing your current role…" : "Building your career ticker…"}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">{statusLabel}</p>
           </div>

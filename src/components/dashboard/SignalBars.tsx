@@ -16,14 +16,14 @@ const toneText: Record<SignalScore["tone"], string> = {
 
 export const SignalBars = ({ signals }: { signals: SignalScore[] }) => {
   return (
-    <div className="space-y-4">
+    <div className="grid grid-cols-2 gap-x-8 gap-y-4">
       {signals.map((s) => (
         <div key={s.label}>
           <div className="flex items-baseline justify-between font-mono text-xs">
             <span className="text-muted-foreground tracking-wide uppercase">{s.label}</span>
-            <span className={`font-semibold ${toneText[s.tone]}`}>{s.score}</span>
+            <span className={`font-semibold tabular-nums ${toneText[s.tone]}`}>{s.score}</span>
           </div>
-          <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+          <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted">
             <div
               className={`h-full ${toneClass[s.tone]} transition-all duration-700`}
               style={{ width: `${s.score}%` }}
