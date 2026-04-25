@@ -5,22 +5,27 @@
 // the request fails so the demo never blocks.
 // =====================================================================
 
-export type Rating = "BUY" | "HOLD" | "SELL" | "SPECULATIVE";
+export type Rating = "BUY" | "HOLD" | "SELL" | "SHORT" | "SPECULATIVE";
 export type Sentiment = "bullish" | "bearish" | "neutral";
 export type SourceTag = "NEWS" | "FILING" | "DATA";
 
 export interface PricePoint { month: string; price: number; }
 export interface SignalScore { label: string; score: number; tone: "success" | "primary" | "warning" | "destructive"; }
-export interface SourceItem { tag: SourceTag; title: string; outlet: string; sentiment: Sentiment; date: string; }
+export interface SourceItem { tag: SourceTag; title: string; url: string; outlet: string; sentiment: Sentiment; date: string; }
 export interface Alternative { title: string; subtitle: string; rating: Rating; delta: string; note: string; }
+
+export interface ChartAnnotation {
+  monthIndex: number;
+  label: string;
+  direction: "positive" | "negative";
+}
 
 export interface JobAnalysis {
   ticker: string;
   company: string;
   role: string;
-  salary: number;
-  salaryChangePct: number;
-  marketCap: string;
+  priceIndex: number;
+  priceChangePct: number;
   consensus: Rating;
   rating: Rating;
   ratingNote: string;
@@ -31,12 +36,42 @@ export interface JobAnalysis {
   signals: SignalScore[];
   sources: SourceItem[];
   alternatives: Alternative[];
+  chartAnnotations?: ChartAnnotation[];
+  dataQuality?: "high" | "medium" | "low";
+  salaryMin?: number;
+  salaryMax?: number;
+  salaryCurrency?: string;
+  debugSignals?: {
+    companySummary?: string;
+    newsSignals?: string[];
+    hiringSignals?: string[];
+    riskSignals?: string[];
+    ycStatus?: string | null;
+    ycBatch?: string | null;
+    ycTeamSize?: number | null;
+    ycIndustry?: string | null;
+    secFilingCount?: number | null;
+    secFilingSummaries?: string[];
+    hnJobPostCount?: number | null;
+    hnTopJobTitles?: string[];
+    bundesagenturVacancies?: number | null;
+    bundesagenturTopEmployers?: string[];
+    salaryMin?: number | null;
+    salaryMax?: number | null;
+    salaryCurrency?: string | null;
+    cultureScore?: number | null;
+    cultureSummary?: string;
+    handelsregisterInsolvency?: boolean;
+    handelsregisterFounded?: string | null;
+    groundingSummary?: string;
+    dataSourcesHit?: number;
+  };
 }
 
 // Backend response shape (POST /api/analyze-job-stock)
 interface BackendResponse {
   ticker: string;
-  rating: "BUY" | "HOLD" | "SELL" | "SHORT";
+  rating: Rating;
   oneLineVerdict: string;
   scores: { momentum: number; salaryYield: number; volatility: number; upside: number };
   chartData: { month: string; price: number }[];
@@ -45,32 +80,64 @@ interface BackendResponse {
   recommendation: string;
   alternatives: { label: string; description: string; risk: "Low" | "Medium" | "High" }[];
   sources: { title: string; url: string; snippet: string }[];
-  debugSignals: { companySummary: string; newsSignals: string[]; hiringSignals: string[]; riskSignals: string[] };
+  chartAnnotations?: ChartAnnotation[];
+  dataQuality?: "high" | "medium" | "low";
+  debugSignals?: {
+    companySummary?: string;
+    newsSignals?: string[];
+    hiringSignals?: string[];
+    riskSignals?: string[];
+    ycStatus?: string | null;
+    ycBatch?: string | null;
+    ycTeamSize?: number | null;
+    ycIndustry?: string | null;
+    secFilingCount?: number | null;
+    secFilingSummaries?: string[];
+    hnJobPostCount?: number | null;
+    hnTopJobTitles?: string[];
+    bundesagenturVacancies?: number | null;
+    bundesagenturTopEmployers?: string[];
+    salaryMin?: number | null;
+    salaryMax?: number | null;
+    salaryCurrency?: string | null;
+    cultureScore?: number | null;
+    cultureSummary?: string;
+    handelsregisterInsolvency?: boolean;
+    handelsregisterFounded?: string | null;
+    groundingSummary?: string;
+    dataSourcesHit?: number;
+  };
 }
 
 const RISK_TO_RATING: Record<string, Rating> = { Low: "HOLD", Medium: "BUY", High: "SPECULATIVE" };
-const RISK_TO_DELTA: Record<string, string> = { Low: "+1–5% expected", Medium: "+10–20% upside", High: "±40% variance" };
 const SIGNAL_TONES: SignalScore["tone"][] = ["success", "primary", "warning", "success"];
 
 function safeHostname(url: string): string {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
 }
 
+function classifySource(url: string): SourceTag {
+  const host = safeHostname(url);
+  if (/sec\.gov|bundesanzeiger|handelsregister/.test(host)) return "FILING";
+  if (/glassdoor|levels\.fyi|stepstone|gehalt|kununu|payscale|blind\.co/.test(host)) return "DATA";
+  return "NEWS";
+}
+
 function adaptResponse(raw: BackendResponse, company: string, role: string): JobAnalysis {
   const series = raw.chartData ?? [];
-  const first = series[0]?.price ?? 100000;
+  const first = series[0]?.price ?? 100;
   const last = series[series.length - 1]?.price ?? first;
   const changePct = first > 0 ? ((last - first) / first) * 100 : 0;
-  const rating = raw.rating === "SHORT" ? "SELL" : (raw.rating as Rating);
+  const rating = raw.rating as Rating;
   const today = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const ds = raw.debugSignals;
 
   return {
     ticker: raw.ticker,
     company,
     role,
-    salary: last,
-    salaryChangePct: parseFloat(changePct.toFixed(1)),
-    marketCap: "AI-estimated",
+    priceIndex: parseFloat(last.toFixed(1)),
+    priceChangePct: parseFloat(changePct.toFixed(1)),
     consensus: rating,
     rating,
     ratingNote: raw.oneLineVerdict,
@@ -84,9 +151,10 @@ function adaptResponse(raw: BackendResponse, company: string, role: string): Job
       { label: "Volatility",    score: raw.scores.volatility,  tone: SIGNAL_TONES[2] },
       { label: "Career Upside", score: raw.scores.upside,      tone: SIGNAL_TONES[3] },
     ],
-    sources: raw.sources.map((s, i) => ({
-      tag: (["NEWS", "DATA", "FILING"] as SourceTag[])[i % 3],
+    sources: raw.sources.map((s) => ({
+      tag: classifySource(s.url),
       title: s.title,
+      url: s.url,
       outlet: safeHostname(s.url),
       sentiment: "neutral" as Sentiment,
       date: today,
@@ -95,9 +163,15 @@ function adaptResponse(raw: BackendResponse, company: string, role: string): Job
       title: a.label,
       subtitle: `${a.risk} risk`,
       rating: RISK_TO_RATING[a.risk] ?? "HOLD",
-      delta: RISK_TO_DELTA[a.risk] ?? "",
+      delta: a.risk === "Low" ? "Stable, low variance" : a.risk === "Medium" ? "Moderate upside potential" : "High variance, high ceiling",
       note: a.description,
     })),
+    chartAnnotations: raw.chartAnnotations ?? [],
+    dataQuality: raw.dataQuality,
+    salaryMin: ds?.salaryMin ?? undefined,
+    salaryMax: ds?.salaryMax ?? undefined,
+    salaryCurrency: ds?.salaryCurrency ?? undefined,
+    debugSignals: ds,
   };
 }
 
@@ -105,9 +179,8 @@ export const mockAnalysis: JobAnalysis = {
   ticker: "N26-PM",
   company: "N26",
   role: "Product Manager",
-  salary: 142800,
-  salaryChangePct: 2.4,
-  marketCap: "$1.2B implied",
+  priceIndex: 102.3,
+  priceChangePct: 2.4,
   consensus: "HOLD",
   rating: "HOLD",
   ratingNote: "Stable cash-flow role. Limited near-term upside; downside protected by hiring freeze easing in Q2.",
@@ -138,17 +211,18 @@ export const mockAnalysis: JobAnalysis = {
     { label: "Career Upside", score: 80, tone: "success" },
   ],
   sources: [
-    { tag: "NEWS",   title: "N26 returns to profit, eyes SMB expansion in 2025",          outlet: "Financial Times", sentiment: "bullish", date: "Apr 18" },
-    { tag: "FILING", title: "Annual report: net revenue €440M, churn down 180bps",        outlet: "Bundesanzeiger",  sentiment: "bullish", date: "Apr 02" },
-    { tag: "DATA",   title: "PM headcount up 7% QoQ on LinkedIn signal",                  outlet: "Revelio Labs",    sentiment: "bullish", date: "Mar 28" },
-    { tag: "NEWS",   title: "BaFin lifts customer growth cap on N26",                     outlet: "Reuters",         sentiment: "neutral", date: "Mar 11" },
-    { tag: "DATA",   title: "Glassdoor PM comp at N26 trails Revolut by 12% at L5",       outlet: "Glassdoor",       sentiment: "bearish", date: "Feb 24" },
+    { tag: "NEWS",   title: "N26 returns to profit, eyes SMB expansion in 2025",          url: "https://ft.com",          outlet: "Financial Times", sentiment: "bullish", date: "Apr 18" },
+    { tag: "FILING", title: "Annual report: net revenue €440M, churn down 180bps",        url: "https://bundesanzeiger.de", outlet: "Bundesanzeiger",  sentiment: "bullish", date: "Apr 02" },
+    { tag: "DATA",   title: "PM headcount up 7% QoQ on LinkedIn signal",                  url: "https://glassdoor.com",   outlet: "Glassdoor",       sentiment: "bullish", date: "Mar 28" },
+    { tag: "NEWS",   title: "BaFin lifts customer growth cap on N26",                     url: "https://reuters.com",     outlet: "Reuters",         sentiment: "neutral", date: "Mar 11" },
+    { tag: "DATA",   title: "Glassdoor PM comp at N26 trails Revolut by 12% at L5",       url: "https://glassdoor.com",   outlet: "Glassdoor",       sentiment: "bearish", date: "Feb 24" },
   ],
   alternatives: [
-    { title: "Stay 6 months",           subtitle: "Hold N26-PM",      rating: "HOLD",        delta: "+1.8% expected", note: "Vesting cliff + reorg clarity Q3." },
-    { title: "Join competitor Revolut", subtitle: "Switch to RVLT-PM", rating: "BUY",         delta: "+18.4% upside",  note: "Higher band, larger surface area." },
-    { title: "Start your own thing",    subtitle: "Long YOU-FOUNDER",  rating: "SPECULATIVE", delta: "±60% variance",  note: "High β. Unlimited upside, capital-intensive." },
+    { title: "Stay 6 months",           subtitle: "Hold N26-PM",      rating: "HOLD",        delta: "Stable, low variance",        note: "Vesting cliff + reorg clarity Q3." },
+    { title: "Join competitor Revolut", subtitle: "Switch to RVLT-PM", rating: "BUY",         delta: "Moderate upside potential",   note: "Higher band, larger surface area." },
+    { title: "Start your own thing",    subtitle: "Long YOU-FOUNDER",  rating: "SPECULATIVE", delta: "High variance, high ceiling",  note: "High β. Unlimited upside, capital-intensive." },
   ],
+  dataQuality: "high",
 };
 
 // ── SSE streaming ─────────────────────────────────────────────────────────────
@@ -213,7 +287,6 @@ export async function getJobAnalysis(input: { company: string; role: string; ris
       body: JSON.stringify({
         company: input.company,
         role: input.role,
-        riskAppetite: input.riskAppetite ?? "balanced",
       }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -221,7 +294,7 @@ export async function getJobAnalysis(input: { company: string; role: string; ris
     return adaptResponse(raw, input.company, input.role);
   } catch (err) {
     console.warn("Backend unavailable, using mock data:", err);
-    return { ...mockAnalysis, company: input.company, role: input.role };
+    return { ...mockAnalysis, company: input.company, role: input.role, dataQuality: "low" as const };
   }
 }
 

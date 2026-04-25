@@ -30,7 +30,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from backend.helpers.tavily_research import research_company, research_company_stream
+from backend.helpers.tavily_research import research_company, research_company_stream, research_salary_culture
+from backend.helpers.gemini_research import research_with_grounding_stream
 from backend.helpers.structured_data import fetch_structured_signals
 from backend.helpers.research_context import build_context, count_sources_hit
 from backend.helpers.llm_scoring import score_job, score_job_stream_async
@@ -65,19 +66,21 @@ async def analyze_job_stock(req: JobRequest):
     role    = req.role.strip()
     logger.info("Analyzing: company=%s role=%s", company, role)
 
-    # ── Phase 1: Parallel data collection — 20s hard cap ────────────────────
-    tavily_res:     dict = {}
-    structured_res: dict = {}
+    # ── Phase 1: Parallel data collection — 25s hard cap ────────────────────
+    tavily_res:         dict = {}
+    structured_res:     dict = {}
+    salary_culture_res: dict = {}
     try:
         results = await asyncio.wait_for(
             asyncio.gather(
                 research_company(company, role),
                 fetch_structured_signals(company, role),
+                research_salary_culture(company, role),
                 return_exceptions=True,
             ),
-            timeout=20.0,
+            timeout=25.0,
         )
-        t, s = results
+        t, s, sc = results
         if isinstance(t, Exception):
             logger.warning("Tavily failed: %s", t)
         else:
@@ -88,16 +91,23 @@ async def analyze_job_stock(req: JobRequest):
         else:
             structured_res = s
 
+        if isinstance(sc, Exception):
+            logger.warning("Salary/culture failed: %s", sc)
+        else:
+            salary_culture_res = sc
+
     except asyncio.TimeoutError:
-        logger.warning("Research phase timed out after 20s — proceeding with partial signals")
+        logger.warning("Research phase timed out after 25s — proceeding with partial signals")
 
     logger.info(
-        "Research complete — tavily_keys=%d structured_keys=%d",
-        len(tavily_res), len(structured_res),
+        "Research complete — tavily_keys=%d structured_keys=%d salary_culture_keys=%d",
+        len(tavily_res), len(structured_res), len(salary_culture_res),
     )
 
     # ── Phase 2: Build typed signal context ──────────────────────────────────
-    ctx     = build_context(tavily_res, structured_res)
+    # Merge salary/culture into tavily so LLM sees compensation + culture data
+    merged_tavily = {**tavily_res, **salary_culture_res}
+    ctx     = build_context(merged_tavily, structured_res)
     sources = ctx.pop("sources", [])
 
     # ── Phase 3: LLM synthesis — 30s cap ─────────────────────────────────────
@@ -113,13 +123,27 @@ async def analyze_job_stock(req: JobRequest):
         hits = count_sources_hit(ctx)
         result["dataQuality"] = "high" if hits >= 6 else "medium" if hits >= 3 else "low"
 
-        # Expose data provenance in debugSignals
+        # Expose full data provenance in debugSignals
         ds = result.get("debugSignals", {})
-        ds["ycStatus"]               = ctx.get("ycStatus")
-        ds["secFilingCount"]         = ctx.get("secFilingCount")
-        ds["hnJobPostCount"]         = ctx.get("hnJobPostCount")
-        ds["bundesagenturVacancies"] = ctx.get("bundesagenturVacancies")
-        ds["dataSourcesHit"]         = hits
+        ds["ycStatus"]                  = ctx.get("ycStatus")
+        ds["ycBatch"]                   = ctx.get("ycBatch")
+        ds["secFilingCount"]            = ctx.get("secFilingCount")
+        ds["hnJobPostCount"]            = ctx.get("hnJobPostCount")
+        ds["bundesagenturVacancies"]    = ctx.get("bundesagenturVacancies")
+        ds["salaryMin"]                 = ctx.get("salaryMin")
+        ds["salaryMax"]                 = ctx.get("salaryMax")
+        ds["salaryCurrency"]            = ctx.get("salaryCurrency")
+        ds["cultureScore"]              = ctx.get("cultureScore")
+        ds["cultureSummary"]            = ctx.get("cultureSummary", "")
+        ds["dataSourcesHit"]            = hits
+        ds["bundesagenturTopEmployers"] = ctx.get("bundesagenturTopEmployers", [])
+        ds["hnTopJobTitles"]            = ctx.get("hnTopJobTitles", [])
+        ds["ycTeamSize"]                = ctx.get("ycTeamSize")
+        ds["ycIndustry"]                = ctx.get("ycIndustry")
+        ds["handelsregisterInsolvency"] = ctx.get("handelsregisterInsolvency", False)
+        ds["handelsregisterFounded"]    = ctx.get("handelsregisterFounded")
+        ds["secFilingSummaries"]        = ctx.get("secFilingSummaries", [])
+        ds["groundingSummary"]          = ctx.get("groundingSummary", "")
         result["debugSignals"] = ds
 
         logger.info(
@@ -160,13 +184,17 @@ async def analyze_job_stock_stream(req: JobRequest):
         tavily_data: dict = {}
 
         try:
-            # Phase 1: structured data fires in background while Tavily streams
+            # Phase 1: all 3 research engines fire in parallel
             structured_task = asyncio.create_task(
                 asyncio.wait_for(fetch_structured_signals(company, role), timeout=15.0)
+            )
+            salary_culture_task = asyncio.create_task(
+                asyncio.wait_for(research_salary_culture(company, role), timeout=20.0)
             )
 
             yield _sse({"type": "status", "label": "Searching company data…"})
 
+            # Tavily 5-search stream (yields signal events live)
             try:
                 async for event in research_company_stream(company, role):
                     if event["type"] == "tavily_done":
@@ -177,12 +205,32 @@ async def analyze_job_stock_stream(req: JobRequest):
             except Exception as e:
                 logger.warning("Tavily stream failed: %s", e)
 
+            # Gemini grounding stream (yields signal + grounding_done)
+            grounding_summary = ""
+            grounding_sources: list = []
+            try:
+                async for event in research_with_grounding_stream(company, role):
+                    if event["type"] == "grounding_done":
+                        grounding_summary = event.get("summary", "")
+                        grounding_sources = event.get("sources", [])
+                    else:
+                        yield _sse(event)
+            except Exception as e:
+                logger.warning("Gemini grounding stream failed: %s", e)
+
             # Collect structured data (usually already done)
             structured_res: dict = {}
             try:
                 structured_res = await structured_task
             except Exception as e:
                 logger.warning("Structured data failed in stream: %s", e)
+
+            # Collect salary/culture data
+            salary_culture: dict = {}
+            try:
+                salary_culture = await salary_culture_task
+            except Exception as e:
+                logger.warning("Tavily Research (salary/culture) failed in stream: %s", e)
 
             # Emit structured signals
             items = []
@@ -196,12 +244,37 @@ async def analyze_job_stock_stream(req: JobRequest):
                 items.append(
                     f"{structured_res['bundesagenturVacancies']} open {role!r} roles in Germany"
                 )
+            if salary_culture.get("salaryMin") and salary_culture.get("salaryMax"):
+                cur = salary_culture.get("salaryCurrency", "")
+                items.append(
+                    f"Salary range: {cur}{int(salary_culture['salaryMin']):,}–{cur}{int(salary_culture['salaryMax']):,}"
+                )
             if items:
                 yield _sse({"type": "signal", "category": "structured", "items": items})
 
+            # Merge all sources: Tavily search + grounding + salary/culture
+            all_sources = (
+                sources
+                + grounding_sources
+                + salary_culture.get("sources", [])
+            )
+            # Deduplicate by URL
+            seen_urls: set = set()
+            deduped_sources = []
+            for s in all_sources:
+                url = s.get("url", "")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    deduped_sources.append(s)
+
             # Phase 2: build context + stream LLM
-            ctx = build_context(tavily_data, structured_res)
-            ctx_sources = ctx.pop("sources", sources)
+            merged_tavily = {
+                **tavily_data,
+                **salary_culture,
+                "groundingSummary": grounding_summary,
+            }
+            ctx = build_context(merged_tavily, structured_res)
+            ctx_sources = deduped_sources or ctx.pop("sources", sources)
 
             yield _sse({"type": "status", "label": "Analyzing with Gemini 2.5 Flash…"})
 
@@ -213,11 +286,25 @@ async def analyze_job_stock_stream(req: JobRequest):
                     hits = count_sources_hit(ctx)
                     result["dataQuality"] = "high" if hits >= 6 else "medium" if hits >= 3 else "low"
                     ds = result.get("debugSignals", {})
-                    ds["ycStatus"]               = ctx.get("ycStatus")
-                    ds["secFilingCount"]         = ctx.get("secFilingCount")
-                    ds["hnJobPostCount"]         = ctx.get("hnJobPostCount")
-                    ds["bundesagenturVacancies"] = ctx.get("bundesagenturVacancies")
-                    ds["dataSourcesHit"]         = hits
+                    ds["ycStatus"]                  = ctx.get("ycStatus")
+                    ds["ycBatch"]                   = ctx.get("ycBatch")
+                    ds["secFilingCount"]            = ctx.get("secFilingCount")
+                    ds["hnJobPostCount"]            = ctx.get("hnJobPostCount")
+                    ds["bundesagenturVacancies"]    = ctx.get("bundesagenturVacancies")
+                    ds["salaryMin"]                 = ctx.get("salaryMin")
+                    ds["salaryMax"]                 = ctx.get("salaryMax")
+                    ds["salaryCurrency"]            = ctx.get("salaryCurrency")
+                    ds["cultureScore"]              = ctx.get("cultureScore")
+                    ds["cultureSummary"]            = salary_culture.get("cultureSummary", "")
+                    ds["dataSourcesHit"]            = hits
+                    ds["bundesagenturTopEmployers"] = ctx.get("bundesagenturTopEmployers", [])
+                    ds["hnTopJobTitles"]            = ctx.get("hnTopJobTitles", [])
+                    ds["ycTeamSize"]                = ctx.get("ycTeamSize")
+                    ds["ycIndustry"]                = ctx.get("ycIndustry")
+                    ds["handelsregisterInsolvency"] = ctx.get("handelsregisterInsolvency", False)
+                    ds["handelsregisterFounded"]    = ctx.get("handelsregisterFounded")
+                    ds["secFilingSummaries"]        = ctx.get("secFilingSummaries", [])
+                    ds["groundingSummary"]          = ctx.get("groundingSummary", "")
                     result["debugSignals"] = ds
                     yield _sse({"type": "result", "data": result})
                 elif event["type"] == "error":

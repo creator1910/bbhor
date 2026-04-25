@@ -20,9 +20,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-TAVILY_API_URL    = "https://api.tavily.com/search"
-TAVILY_EXTRACT_URL = "https://api.tavily.com/extract"
-TAVILY_API_KEY    = os.getenv("TAVILY_API_KEY", "")
+TAVILY_API_URL      = "https://api.tavily.com/search"
+TAVILY_EXTRACT_URL  = "https://api.tavily.com/extract"
+TAVILY_RESEARCH_URL = "https://api.tavily.com/research"
+TAVILY_API_KEY      = os.getenv("TAVILY_API_KEY", "")
 
 RELEVANCE_THRESHOLD = 0.5
 MAX_SNIPPETS        = 3
@@ -249,6 +250,81 @@ async def research_company_stream(company: str, role: str):
         "sentimentSnippets": _snippets(filtered_by_cat.get("sentiment", [])),
         "sources":           _sources(all_res)[:8],
     }}
+
+
+# ── Tavily Research API (agentic salary+culture) ─────────────────────────────
+
+async def research_salary_culture(company: str, role: str) -> dict:
+    """
+    Calls the Tavily Research API (agentic, multi-step) with domain filtering
+    and a structured output_schema. Returns salary + culture structured data.
+
+    Falls back to an empty dict on any error — callers must check hasSalaryRangeData.
+    """
+    if not TAVILY_API_KEY:
+        return {}
+
+    payload = {
+        "api_key": TAVILY_API_KEY,
+        "query": (
+            f"What is the salary range for {role} at {company}? "
+            f"What do employees say about the culture and work environment at {company}? "
+            f"Include specific numbers from Glassdoor, Levels.fyi, Kununu, or Stepstone."
+        ),
+        "search_depth": "advanced",
+        "include_domains": [
+            "levels.fyi", "glassdoor.com", "stepstone.de", "gehalt.de",
+            "kununu.com", "blind.co", "reddit.com", "payscale.com",
+            "gehaltsvergleich.com",
+        ],
+        "max_results": 8,
+        "output_schema": {
+            "salary_range": {
+                "min": "number (annual, in local currency, null if unknown)",
+                "max": "number (annual, in local currency, null if unknown)",
+                "currency": "string (ISO code like EUR, USD, GBP)",
+                "source": "string (which site this came from)",
+            },
+            "culture_summary": "string (2-3 sentence summary of employee sentiment)",
+            "culture_score": "number between 1 and 5 (Glassdoor/Kununu style, null if unknown)",
+            "sources": [{"title": "string", "url": "string", "snippet": "string"}],
+        },
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(TAVILY_RESEARCH_URL, json=payload, timeout=25.0)
+            resp.raise_for_status()
+            data = resp.json()
+
+        structured = data.get("output_schema", data)
+        salary = structured.get("salary_range") or {}
+        sources_raw = structured.get("sources") or data.get("sources") or []
+
+        result: dict = {
+            "salaryMin":      _safe_num(salary.get("min")),
+            "salaryMax":      _safe_num(salary.get("max")),
+            "salaryCurrency": salary.get("currency") or "EUR",
+            "salarySource":   salary.get("source") or "",
+            "cultureSummary": structured.get("culture_summary") or "",
+            "cultureScore":   _safe_num(structured.get("culture_score")),
+            "sources": [
+                {"title": s.get("title", ""), "url": s.get("url", ""), "snippet": s.get("snippet", "")}
+                for s in sources_raw if s.get("url")
+            ][:6],
+        }
+        return result
+
+    except Exception as e:
+        logger.warning("Tavily Research API failed: %s", e)
+        return {}
+
+
+def _safe_num(v) -> Optional[float]:
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 # ── batch entry point ─────────────────────────────────────────────────────────
