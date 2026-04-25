@@ -1,0 +1,141 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* $JOB Career Markets — Bloomberg Terminal × Linear/Stripe
+   Dark-first design system. All colors HSL.
+*/
+
+@layer base {
+  :root {
+    /* Default to dark — this is a dark-only product */
+    --background: 240 6% 5%;          /* #0a0a0b */
+    --foreground: 0 0% 96%;
+
+    --card: 240 4% 7%;                /* #111113 */
+    --card-foreground: 0 0% 96%;
+    --card-elevated: 240 4% 9%;
+    --card-border: 240 4% 14%;
+
+    --popover: 240 4% 8%;
+    --popover-foreground: 0 0% 96%;
+
+    --primary: 22 95% 53%;            /* orange #f97316 */
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 22 100% 60%;
+
+    --secondary: 240 4% 12%;
+    --secondary-foreground: 0 0% 92%;
+
+    --muted: 240 4% 11%;
+    --muted-foreground: 240 5% 55%;
+
+    --accent: 240 4% 12%;
+    --accent-foreground: 0 0% 96%;
+
+    --destructive: 0 84% 60%;         /* #ef4444 red */
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 71% 45%;           /* #22c55e green */
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;            /* #f59e0b yellow/amber */
+    --warning-foreground: 0 0% 8%;
+
+    --border: 240 4% 14%;
+    --input: 240 4% 12%;
+    --ring: 22 95% 53%;
+
+    --radius: 0.625rem;
+
+    /* Gradients */
+    --gradient-orange: linear-gradient(180deg, hsl(22 95% 53% / 0.45), hsl(22 95% 53% / 0));
+    --gradient-amber-glow: radial-gradient(ellipse at center, hsl(38 92% 50% / 0.35), transparent 70%);
+    --gradient-orange-glow: radial-gradient(ellipse at center, hsl(22 95% 53% / 0.25), transparent 60%);
+
+    /* Shadows / glows */
+    --shadow-orange: 0 0 40px hsl(22 95% 53% / 0.35);
+    --shadow-amber: 0 0 60px hsl(38 92% 50% / 0.45);
+    --shadow-card: 0 1px 0 hsl(0 0% 100% / 0.04) inset, 0 8px 24px -12px hsl(0 0% 0% / 0.6);
+
+    --sidebar-background: 240 4% 6%;
+    --sidebar-foreground: 0 0% 90%;
+    --sidebar-primary: 22 95% 53%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 4% 10%;
+    --sidebar-accent-foreground: 0 0% 96%;
+    --sidebar-border: 240 4% 14%;
+    --sidebar-ring: 22 95% 53%;
+  }
+
+  .dark {
+    color-scheme: dark;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html, body, #root {
+    @apply bg-background text-foreground;
+    min-height: 100%;
+  }
+
+  body {
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "cv02","cv03","cv04","cv11";
+  }
+
+  .font-mono {
+    font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+  }
+}
+
+@layer components {
+  .grid-dots {
+    background-image: radial-gradient(hsl(0 0% 100% / 0.06) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+
+  .ticker-track {
+    animation: ticker-scroll 60s linear infinite;
+  }
+
+  .glow-amber {
+    box-shadow: var(--shadow-amber);
+  }
+
+  .glow-orange {
+    box-shadow: var(--shadow-orange);
+  }
+}
+
+@layer utilities {
+  .text-success { color: hsl(var(--success)); }
+  .text-destructive-strong { color: hsl(var(--destructive)); }
+  .text-warning { color: hsl(var(--warning)); }
+  .bg-success\/10 { background-color: hsl(var(--success) / 0.1); }
+  .bg-destructive\/10 { background-color: hsl(var(--destructive) / 0.1); }
+  .bg-warning\/10 { background-color: hsl(var(--warning) / 0.1); }
+}
+
+@keyframes ticker-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+.animate-pulse-dot { animation: pulse-dot 1.2s ease-in-out infinite; }
+
+@keyframes amber-pulse {
+  0%, 100% { box-shadow: 0 0 60px hsl(38 92% 50% / 0.45), 0 0 0 1px hsl(38 92% 50% / 0.4) inset; }
+  50%      { box-shadow: 0 0 90px hsl(38 92% 50% / 0.7),  0 0 0 1px hsl(38 92% 50% / 0.6) inset; }
+}
+.animate-amber-pulse { animation: amber-pulse 3.2s ease-in-out infinite; }
