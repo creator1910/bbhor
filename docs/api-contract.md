@@ -7,8 +7,7 @@
 ```json
 {
   "company": "string",
-  "role": "string",
-  "riskAppetite": "safe" | "balanced" | "ambitious" | "founder"
+  "role": "string"
 }
 ```
 
@@ -60,5 +59,5 @@
 - `rating` maps to: BUY = strong upside, HOLD = stable, SELL = caution, SHORT = avoid
 - `scores` are all 0–100
 - `chartData` contains 12 months of synthetic price history
-- The frontend polls this single endpoint; no auth required
+- The frontend calls this single endpoint; no auth required
 - On Tavily failure the endpoint still returns a valid response using LLM-only fallback

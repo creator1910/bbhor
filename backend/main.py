@@ -41,11 +41,6 @@ app.add_middleware(
 class JobRequest(BaseModel):
     company: str = Field(..., min_length=1, max_length=200, example="N26")
     role: str = Field(..., min_length=1, max_length=200, example="Product Manager")
-    riskAppetite: str = Field(
-        default="balanced",
-        pattern="^(safe|balanced|ambitious|founder)$",
-        example="balanced",
-    )
 
 
 @app.get("/")
@@ -61,9 +56,8 @@ async def analyze_job_stock(req: JobRequest):
     """
     company = req.company.strip()
     role = req.role.strip()
-    risk_appetite = req.riskAppetite
 
-    logger.info("Analyzing: company=%s role=%s risk=%s", company, role, risk_appetite)
+    logger.info("Analyzing: company=%s role=%s", company, role)
 
     # Step 1: Research via Tavily
     research = {}
@@ -77,7 +71,7 @@ async def analyze_job_stock(req: JobRequest):
 
     # Step 2: LLM scoring via Gemini
     try:
-        result = score_job(company, role, risk_appetite, research)
+        result = score_job(company, role, research)
         # Attach real sources from Tavily if we got them
         if sources:
             result["sources"] = sources
@@ -85,7 +79,7 @@ async def analyze_job_stock(req: JobRequest):
         return result
     except Exception as e:
         logger.warning("LLM scoring failed (%s) — using fallback response", e)
-        fallback = get_fallback(company, role, risk_appetite)
+        fallback = get_fallback(company, role)
         if sources:
             fallback["sources"] = sources
         return fallback

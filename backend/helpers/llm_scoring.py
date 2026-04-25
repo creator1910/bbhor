@@ -49,12 +49,11 @@ RESPONSE_SCHEMA = """{
 }"""
 
 
-def _build_prompt(company: str, role: str, risk_appetite: str, research: dict) -> str:
+def _build_prompt(company: str, role: str, research: dict) -> str:
     return f"""Analyze this job as a synthetic career stock.
 
 Company: {company}
 Role: {role}
-Candidate risk appetite: {risk_appetite}
 
 Research signals:
 Company summary: {research.get('companySummary', 'N/A')}
@@ -71,11 +70,10 @@ Return ONLY valid JSON matching this schema exactly:
 Important:
 - chartData must have exactly 12 entries with realistic price movement (start ~100, vary ±30)
 - riskSignals should list concrete risks you identified
-- Adjust scores and rating based on the {risk_appetite} risk appetite
 """
 
 
-def score_job(company: str, role: str, risk_appetite: str, research: dict) -> dict:
+def score_job(company: str, role: str, research: dict) -> dict:
     """
     Call Gemini to produce a structured job stock analysis.
     Raises on API error — caller should catch and use fallback.
@@ -84,7 +82,7 @@ def score_job(company: str, role: str, risk_appetite: str, research: dict) -> di
         raise ValueError("GOOGLE_API_KEY not set")
 
     client = genai.Client(api_key=GOOGLE_API_KEY)
-    prompt = _build_prompt(company, role, risk_appetite, research)
+    prompt = _build_prompt(company, role, research)
 
     response = client.models.generate_content(
         model=MODEL,

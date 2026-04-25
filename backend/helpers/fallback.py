@@ -95,7 +95,7 @@ FALLBACK_N26_PM = {
 }
 
 
-def get_fallback(company: str, role: str, risk_appetite: str) -> dict:
+def get_fallback(company: str, role: str) -> dict:
     """
     Return a plausible fallback response.
     For N26 PM we return the curated mock; for others we adapt it minimally.
