@@ -15,17 +15,19 @@ const formatSalary = (n: number) =>
 const Dashboard = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const state = (location.state || {}) as { company?: string; role?: string };
+  const state = (location.state || {}) as { company?: string; role?: string; data?: JobAnalysis };
 
-  const [data, setData] = useState<JobAnalysis>(mockAnalysis);
+  // Use data passed from Loading page — only fetch directly if someone hits /dashboard cold
+  const [data, setData] = useState<JobAnalysis>(state.data || mockAnalysis);
   const [vote, setVote] = useState<"BUY" | "HOLD" | "SELL" | null>(null);
 
   useEffect(() => {
+    if (state.data) return; // already have real data from the loading page
     let cancelled = false;
     getJobAnalysis({ company: state.company || "N26", role: state.role || "Product Manager" })
       .then((d) => { if (!cancelled) setData(d); });
     return () => { cancelled = true; };
-  }, [state.company, state.role]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const positive = data.salaryChangePct >= 0;
   const r = ratingStyles[data.rating];

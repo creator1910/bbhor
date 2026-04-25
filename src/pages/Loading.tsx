@@ -2,25 +2,50 @@ import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Check } from "lucide-react";
 import { AppTopbar } from "@/components/AppTopbar";
-import { loadingSteps } from "@/lib/mockData";
+import { getJobAnalysis, loadingSteps, type JobAnalysis } from "@/lib/mockData";
 
 const STEP_MS = 850;
 
 const Loading = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const state = (location.state || {}) as { company?: string; role?: string };
+  const state = (location.state || {}) as { company?: string; role?: string; riskAppetite?: string };
 
   const [active, setActive] = useState(0);
+  const [apiData, setApiData] = useState<JobAnalysis | null>(null);
 
+  const stepsComplete = active >= loadingSteps.length;
+  const lastStep = active === loadingSteps.length - 1;
+
+  // Fire the real API call immediately on mount
   useEffect(() => {
-    if (active >= loadingSteps.length) {
-      const t = setTimeout(() => navigate("/dashboard", { state }), 600);
-      return () => clearTimeout(t);
-    }
+    let cancelled = false;
+    getJobAnalysis({
+      company: state.company || "N26",
+      role: state.role || "Product Manager",
+      riskAppetite: state.riskAppetite,
+    }).then((data) => {
+      if (!cancelled) setApiData(data);
+    });
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Advance steps — hold on the last one until the API resolves
+  useEffect(() => {
+    if (stepsComplete) return;
+    if (lastStep && !apiData) return; // wait for API before completing last step
     const t = setTimeout(() => setActive((s) => s + 1), STEP_MS);
     return () => clearTimeout(t);
-  }, [active, navigate, state]);
+  }, [active, apiData, stepsComplete, lastStep]);
+
+  // Navigate once all steps are done and data is ready
+  useEffect(() => {
+    if (!stepsComplete || !apiData) return;
+    const t = setTimeout(() => {
+      navigate("/dashboard", { state: { ...state, data: apiData } });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [stepsComplete, apiData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const progress = Math.min(100, (active / loadingSteps.length) * 100);
 
