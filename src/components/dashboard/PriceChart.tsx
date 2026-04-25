@@ -1,7 +1,7 @@
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { PricePoint } from "@/lib/mockData";
 
-const fmt = (v: number) => `$${(v / 1000).toFixed(1)}K`;
+const fmt = (v: number) => v.toFixed(1);
 
 export const PriceChart = ({ data }: { data: PricePoint[] }) => {
   const min = Math.min(...data.map((d) => d.price));
@@ -30,7 +30,7 @@ export const PriceChart = ({ data }: { data: PricePoint[] }) => {
             tickLine={false}
             axisLine={false}
             tickFormatter={fmt}
-            domain={[min - 2000, max + 2000]}
+            domain={[min - 5, max + 5]}
             width={56}
           />
           <Tooltip

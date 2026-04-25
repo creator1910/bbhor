@@ -32,6 +32,25 @@ def build_context(tavily: dict, structured: dict) -> dict:
     ctx["sentimentSnippets"]= tavily.get("sentimentSnippets", [])
     ctx["sources"]          = tavily.get("sources", [])
 
+    # ── Tavily Research — salary + culture ───────────────────────────────────
+    sal_min = tavily.get("salaryMin")
+    sal_max = tavily.get("salaryMax")
+    ctx["hasSalaryRangeData"] = sal_min is not None or sal_max is not None
+    ctx["salaryMin"]          = sal_min
+    ctx["salaryMax"]          = sal_max
+    ctx["salaryCurrency"]     = tavily.get("salaryCurrency", "EUR")
+    ctx["salarySource"]       = tavily.get("salarySource", "")
+
+    cult_summary = tavily.get("cultureSummary", "")
+    ctx["hasCultureData"]  = bool(cult_summary)
+    ctx["cultureSummary"]  = cult_summary
+    ctx["cultureScore"]    = tavily.get("cultureScore")
+
+    # ── Gemini grounding ─────────────────────────────────────────────────────
+    grounding_summary = tavily.get("groundingSummary", "")
+    ctx["hasGroundingData"]  = bool(grounding_summary)
+    ctx["groundingSummary"]  = grounding_summary
+
     # ── YC ──────────────────────────────────────────────────────────────────
     ctx["hasYcData"]    = structured.get("hasYcData", False)
     ctx["ycStatus"]     = structured.get("ycStatus")
@@ -72,5 +91,6 @@ def count_sources_hit(ctx: dict) -> int:
         "hasHiringData", "hasSentimentData",
         "hasYcData", "hasHnData", "hasSecData",
         "hasBundesagenturData", "hasHandelsregisterData",
+        "hasSalaryRangeData", "hasCultureData", "hasGroundingData",
     ]
     return sum(1 for f in flags if ctx.get(f))

@@ -30,7 +30,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from backend.helpers.tavily_research import research_company, research_company_stream
+from backend.helpers.tavily_research import research_company, research_company_stream, research_salary_culture
+from backend.helpers.gemini_research import research_with_grounding_stream
 from backend.helpers.structured_data import fetch_structured_signals
 from backend.helpers.research_context import build_context, count_sources_hit
 from backend.helpers.llm_scoring import score_job, score_job_stream_async
@@ -160,13 +161,17 @@ async def analyze_job_stock_stream(req: JobRequest):
         tavily_data: dict = {}
 
         try:
-            # Phase 1: structured data fires in background while Tavily streams
+            # Phase 1: all 3 research engines fire in parallel
             structured_task = asyncio.create_task(
                 asyncio.wait_for(fetch_structured_signals(company, role), timeout=15.0)
+            )
+            salary_culture_task = asyncio.create_task(
+                asyncio.wait_for(research_salary_culture(company, role), timeout=20.0)
             )
 
             yield _sse({"type": "status", "label": "Searching company data…"})
 
+            # Tavily 5-search stream (yields signal events live)
             try:
                 async for event in research_company_stream(company, role):
                     if event["type"] == "tavily_done":
@@ -177,12 +182,32 @@ async def analyze_job_stock_stream(req: JobRequest):
             except Exception as e:
                 logger.warning("Tavily stream failed: %s", e)
 
+            # Gemini grounding stream (yields signal + grounding_done)
+            grounding_summary = ""
+            grounding_sources: list = []
+            try:
+                async for event in research_with_grounding_stream(company, role):
+                    if event["type"] == "grounding_done":
+                        grounding_summary = event.get("summary", "")
+                        grounding_sources = event.get("sources", [])
+                    else:
+                        yield _sse(event)
+            except Exception as e:
+                logger.warning("Gemini grounding stream failed: %s", e)
+
             # Collect structured data (usually already done)
             structured_res: dict = {}
             try:
                 structured_res = await structured_task
             except Exception as e:
                 logger.warning("Structured data failed in stream: %s", e)
+
+            # Collect salary/culture data
+            salary_culture: dict = {}
+            try:
+                salary_culture = await salary_culture_task
+            except Exception as e:
+                logger.warning("Tavily Research (salary/culture) failed in stream: %s", e)
 
             # Emit structured signals
             items = []
@@ -196,12 +221,37 @@ async def analyze_job_stock_stream(req: JobRequest):
                 items.append(
                     f"{structured_res['bundesagenturVacancies']} open {role!r} roles in Germany"
                 )
+            if salary_culture.get("salaryMin") and salary_culture.get("salaryMax"):
+                cur = salary_culture.get("salaryCurrency", "")
+                items.append(
+                    f"Salary range: {cur}{int(salary_culture['salaryMin']):,}–{cur}{int(salary_culture['salaryMax']):,}"
+                )
             if items:
                 yield _sse({"type": "signal", "category": "structured", "items": items})
 
+            # Merge all sources: Tavily search + grounding + salary/culture
+            all_sources = (
+                sources
+                + grounding_sources
+                + salary_culture.get("sources", [])
+            )
+            # Deduplicate by URL
+            seen_urls: set = set()
+            deduped_sources = []
+            for s in all_sources:
+                url = s.get("url", "")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    deduped_sources.append(s)
+
             # Phase 2: build context + stream LLM
-            ctx = build_context(tavily_data, structured_res)
-            ctx_sources = ctx.pop("sources", sources)
+            merged_tavily = {
+                **tavily_data,
+                **salary_culture,
+                "groundingSummary": grounding_summary,
+            }
+            ctx = build_context(merged_tavily, structured_res)
+            ctx_sources = deduped_sources or ctx.pop("sources", sources)
 
             yield _sse({"type": "status", "label": "Analyzing with Gemini 2.5 Flash…"})
 
@@ -217,6 +267,10 @@ async def analyze_job_stock_stream(req: JobRequest):
                     ds["secFilingCount"]         = ctx.get("secFilingCount")
                     ds["hnJobPostCount"]         = ctx.get("hnJobPostCount")
                     ds["bundesagenturVacancies"] = ctx.get("bundesagenturVacancies")
+                    ds["salaryMin"]              = ctx.get("salaryMin")
+                    ds["salaryMax"]              = ctx.get("salaryMax")
+                    ds["salaryCurrency"]         = ctx.get("salaryCurrency")
+                    ds["cultureScore"]           = ctx.get("cultureScore")
                     ds["dataSourcesHit"]         = hits
                     result["debugSignals"] = ds
                     yield _sse({"type": "result", "data": result})

@@ -4,6 +4,7 @@ export const ratingStyles: Record<Rating, { bg: string; text: string; border: st
   BUY:         { bg: "bg-success/15",     text: "text-success",            border: "border-success/40",     label: "BUY" },
   HOLD:        { bg: "bg-warning/15",     text: "text-warning",            border: "border-warning/40",     label: "HOLD" },
   SELL:        { bg: "bg-destructive/15", text: "text-destructive-strong", border: "border-destructive/40", label: "SELL" },
+  SHORT:       { bg: "bg-destructive/15", text: "text-destructive-strong", border: "border-destructive/40", label: "SHORT" },
   SPECULATIVE: { bg: "bg-primary/15",     text: "text-primary",            border: "border-primary/40",     label: "SPEC" },
 };
 

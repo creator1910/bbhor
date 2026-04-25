@@ -378,7 +378,7 @@ def score_job(company: str, role: str, ctx: dict) -> dict:
             temperature=1.0,              # required when thinking is enabled
             response_mime_type="application/json",
             thinking_config=types.ThinkingConfig(
-                thinking_budget=8000,
+                thinking_budget=1500,
                 include_thoughts=False,   # keep response.text as clean JSON
             ),
         ),
@@ -417,7 +417,7 @@ def _score_job_stream_sync(company: str, role: str, ctx: dict):
             temperature=1.0,
             response_mime_type="application/json",
             thinking_config=types.ThinkingConfig(
-                thinking_budget=8000,
+                thinking_budget=1500,
                 include_thoughts=True,  # we separate thought vs content parts
             ),
         ),

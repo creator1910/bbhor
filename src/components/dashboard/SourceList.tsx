@@ -33,7 +33,18 @@ export const SourceList = ({ items }: { items: SourceItem[] }) => {
               <span className={sentimentStyles[item.sentiment]}>{item.sentiment}</span>
             </span>
           </div>
-          <p className="mt-1.5 text-sm leading-snug text-foreground">{item.title}</p>
+          {item.url ? (
+            <a
+              href={item.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1.5 block text-sm leading-snug text-foreground hover:text-primary transition-colors"
+            >
+              {item.title}
+            </a>
+          ) : (
+            <p className="mt-1.5 text-sm leading-snug text-foreground">{item.title}</p>
+          )}
           <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{item.outlet}</p>
         </li>
       ))}
