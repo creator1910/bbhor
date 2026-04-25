@@ -1,7 +1,9 @@
 """
 High-quality fallback response used when Tavily or the LLM fails.
 Modeled on N26 Product Manager to give a realistic demo.
+Ticker and chartData are generated deterministically via llm_scoring helpers.
 """
+from backend.helpers.llm_scoring import make_ticker, generate_chart
 
 FALLBACK_N26_PM = {
     "ticker": "N26-PM",
@@ -98,26 +100,25 @@ FALLBACK_N26_PM = {
 def get_fallback(company: str, role: str) -> dict:
     """
     Return a plausible fallback response.
-    For N26 PM we return the curated mock; for others we adapt it minimally.
+    Ticker and chartData are always deterministic regardless of which path is taken.
     """
-    if "n26" in company.lower() and "product" in role.lower():
-        return FALLBACK_N26_PM
+    base = (
+        FALLBACK_N26_PM
+        if ("n26" in company.lower() and "product" in role.lower())
+        else dict(FALLBACK_N26_PM)
+    )
+    result = dict(base)
 
-    # Generic fallback — ticker + lightly edited copy
-    ticker = _make_ticker(company, role)
-    result = dict(FALLBACK_N26_PM)
-    result["ticker"] = ticker
-    result["oneLineVerdict"] = f"Analysis unavailable — showing estimated baseline for {company} {role}."
-    result["debugSignals"] = {
-        "companySummary": f"Fallback mode active. Could not retrieve live signals for {company}.",
-        "newsSignals": [],
-        "hiringSignals": [],
-        "riskSignals": ["Live data unavailable — treat scores as illustrative only."],
-    }
+    # Always overwrite with deterministic values
+    result["ticker"]    = make_ticker(company, role)
+    result["chartData"] = generate_chart(company, role, result.get("rating", "HOLD"))
+
+    if not ("n26" in company.lower() and "product" in role.lower()):
+        result["oneLineVerdict"] = f"Analysis unavailable — showing estimated baseline for {company} {role}."
+        result["debugSignals"] = {
+            "companySummary": f"Fallback mode active. Could not retrieve live signals for {company}.",
+            "newsSignals":  [],
+            "hiringSignals": [],
+            "riskSignals":  ["Live data unavailable — treat scores as illustrative only."],
+        }
     return result
-
-
-def _make_ticker(company: str, role: str) -> str:
-    company_part = "".join(w[0] for w in company.split()[:2]).upper() or company[:3].upper()
-    role_part = "".join(w[0] for w in role.split()[:2]).upper() or role[:2].upper()
-    return f"{company_part}-{role_part}"
