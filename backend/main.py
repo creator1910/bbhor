@@ -1,6 +1,5 @@
 """
-$JOB Backend — FastAPI
-Exposes POST /api/analyze-job-stock
+$JOB — FastAPI serves both the API and the built React frontend.
 
 Pipeline:
   1. Tavily research (5 searches + Extract) and structured data (YC/HN/SEC/Bundesagentur/Handelsregister)
@@ -10,18 +9,24 @@ Pipeline:
   4. _validate_and_patch enforces all frontend contracts deterministically
   5. On any failure, a curated fallback is returned
 
-Run locally:
-  uvicorn backend.main:app --reload --port 8000
+Dev:   cd frontend && bun dev   (port 8080, proxies /api to port 8000)
+       uvicorn backend.main:app --reload --port 8000
+
+Demo:  bun --cwd frontend run build
+       uvicorn backend.main:app --port 8000
 """
 
 import asyncio
 import logging
+from pathlib import Path
 
 from dotenv import load_dotenv
 load_dotenv()  # picks up .env before any os.getenv calls in helpers
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.helpers.tavily_research import research_company
@@ -47,11 +52,6 @@ app.add_middleware(
 class JobRequest(BaseModel):
     company: str = Field(..., min_length=1, max_length=200, example="N26")
     role:    str = Field(..., min_length=1, max_length=200, example="Product Manager")
-
-
-@app.get("/")
-def health():
-    return {"status": "ok", "service": "$JOB API", "version": "2.0.0"}
 
 
 @app.post("/api/analyze-job-stock")
@@ -137,3 +137,21 @@ async def analyze_job_stock(req: JobRequest):
     fallback["sources"]     = sources
     fallback["dataQuality"] = "low"
     return fallback
+
+
+# ── Static frontend (built with: bun --cwd frontend run build) ───────────────
+_DIST = Path(__file__).parent.parent / "dist"
+
+if _DIST.exists():
+    app.mount("/assets", StaticFiles(directory=_DIST / "assets"), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        candidate = _DIST / full_path
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(_DIST / "index.html")
+else:
+    @app.get("/")
+    def dev_root():
+        return {"status": "ok", "service": "$JOB API", "version": "2.0.0"}
