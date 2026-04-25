@@ -93,7 +93,7 @@ async def analyze_job_stock(req: JobRequest):
 
 
 # --- Static frontend (built with: bun --cwd frontend run build) ---
-_DIST = Path(__file__).parent.parent / "frontend" / "dist"
+_DIST = Path(__file__).parent.parent / "dist"
 
 if _DIST.exists():
     app.mount("/assets", StaticFiles(directory=_DIST / "assets"), name="assets")

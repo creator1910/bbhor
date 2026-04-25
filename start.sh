@@ -1,11 +1,7 @@
 #!/bin/bash
-# $JOB — build frontend and start the unified server
-# Usage: ./start.sh
+# $JOB — one command to build and serve the full app
+# Equivalent to: bun run start
 set -e
-
-echo "Building frontend..."
-bun --cwd frontend install --frozen-lockfile
-bun --cwd frontend run build
-
-echo "Starting server at http://localhost:8000"
+bun install
+bun run build
 backend/.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000
